@@ -94,7 +94,7 @@ enum usb_requests {
 static void usb_panic_and_reset_state(struct aura_node *node)
 {
 	struct usb_dev_info *inf = aura_get_transportdata(node);
-
+	slog(4, SLOG_DEBUG, "usb: transport failure detected");
 	slog(4, SLOG_DEBUG, "usb: pending transfers: %s %s",
 	     inf->ibusy ? "interrupt " : "",
 	     inf->cbusy ? "control" : "");
@@ -131,7 +131,7 @@ static void submit_control(struct aura_node *node)
 
 	ret = libusb_submit_transfer(inf->ctransfer);
 	if (ret != 0) {
-		slog(0, SLOG_ERROR, "usb: error submitting control transfer");
+		slog(0, SLOG_ERROR, "usb: error submitting control transfer: %s", libusb_error_name(ret));
 		usb_panic_and_reset_state(node);
 	}
 	inf->cbusy = true;
@@ -161,10 +161,12 @@ static int check_interrupt(struct libusb_transfer *transfer)
 	inf->ibusy = false;
 
 	if (failing(inf) || (transfer->status != LIBUSB_TRANSFER_COMPLETED)) {
-		usb_panic_and_reset_state(node);
-		ret = -EIO;
+		slog(1, SLOG_ERROR, "Interrupt transfer failed: %s",
+			libusb_strerror(transfer->status));
+		//usb_panic_and_reset_state(node);
+		//ret = -EIO;
 	}
-	return ret;
+	return 0;
 }
 
 static int check_control(struct libusb_transfer *transfer)
@@ -230,6 +232,10 @@ static void cb_parse_object(struct libusb_transfer *transfer)
 
 	name = (char *)libusb_control_transfer_get_data(transfer);
 
+	#if 1
+	 aura_hexdump("info", name, transfer->actual_length);
+	#endif
+
 	is_method = *name++;
 	afmt = next(name);
 	rfmt = next(afmt);
@@ -259,9 +265,9 @@ static void cb_parse_object(struct libusb_transfer *transfer)
 static void request_object(struct aura_node *node, int id)
 {
 	struct usb_dev_info *inf = aura_get_transportdata(node);
-
+	slog(4, SLOG_DEBUG, "requesting object %d", id);
 	libusb_fill_control_setup(inf->ctrlbuf,
-				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_IN,
+				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_OTHER | LIBUSB_ENDPOINT_IN,
 				  RQ_GET_OBJ_INFO,
 				  0, id, inf->io_buf_size - LIBUSB_CONTROL_SETUP_SIZE);
 	libusb_fill_control_transfer(inf->ctransfer, inf->handle, inf->ctrlbuf, cb_parse_object, node, 1500);
@@ -342,7 +348,7 @@ static void usb_start_ops(struct libusb_device_handle *hndl, void *arg)
 				       cb_interrupt, node, 10000);
 
 	libusb_fill_control_setup(inf->ctrlbuf,
-				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_IN,
+				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_OTHER | LIBUSB_ENDPOINT_IN,
 				  RQ_GET_DEV_INFO,
 				  0, 0, inf->io_buf_size - LIBUSB_CONTROL_SETUP_SIZE);
 	libusb_fill_control_transfer(inf->ctransfer, inf->handle, inf->ctrlbuf, cb_got_dev_info, node, 1500);
@@ -534,7 +540,7 @@ static void submit_event_readout(struct aura_node *node)
 	slog(0, SLOG_DEBUG, "Starting evt readout, max %d bytes, pending %d",
 	     inf->io_buf_size, inf->pending);
 	libusb_fill_control_setup((unsigned char *)buf->data,
-				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_IN,
+				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_OTHER | LIBUSB_ENDPOINT_IN,
 				  RQ_GET_EVENT,
 				  0, 0, buf->size - LIBUSB_CONTROL_SETUP_SIZE);
 	libusb_fill_control_transfer(inf->ctransfer, inf->handle, (unsigned char *)buf->data,
@@ -577,7 +583,7 @@ static void submit_call_write(struct aura_node *node, struct aura_buffer *buf)
 	slog(4, SLOG_DEBUG, "Writing call %s data to device, %d bytes", o->name, o->arglen);
 	inf->current_buffer = buf;
 	libusb_fill_control_setup((unsigned char *)buf->data,
-				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_OUT,
+				  LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_OTHER | LIBUSB_ENDPOINT_OUT,
 				  RQ_PUT_CALL,
 				  0, 0, o->arglen);
 	libusb_fill_control_transfer(inf->ctransfer, inf->handle,
